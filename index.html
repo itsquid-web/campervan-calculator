@@ -1,0 +1,742 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Campervan Electrical Calculator (MVP + MPPT + Shopping List)</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; margin: 20px; line-height: 1.35; }
+    h1 { margin: 0 0 10px; }
+    .grid { display: grid; grid-template-columns: 1fr; gap: 14px; max-width: 1150px; }
+    .card { border: 1px solid #ddd; border-radius: 10px; padding: 14px; }
+    label { display:block; font-size: 12px; opacity: .85; margin-bottom: 4px; }
+    input, select, button, textarea { padding: 10px; border: 1px solid #ccc; border-radius: 8px; font-size: 14px; }
+    button { cursor: pointer; }
+    textarea { width:100%; min-height: 120px; }
+    .row { display:flex; gap: 10px; flex-wrap: wrap; align-items: end; }
+    .row > div { flex: 1 1 170px; min-width: 170px; }
+    table { width:100%; border-collapse: collapse; }
+    th, td { padding: 8px; border-bottom: 1px solid #eee; text-align:left; font-size: 14px; vertical-align: top;}
+    th { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; opacity: .75; }
+    .muted { opacity: .75; font-size: 12px; }
+    .good { font-weight: 700; }
+    .pill { display:inline-block; padding: 4px 8px; border-radius: 999px; border: 1px solid #ddd; font-size: 12px; margin-right: 6px; margin-bottom: 6px; }
+    .warn { border-color: #d6a000; }
+    .danger { border-color: #c0392b; }
+    .ok { border-color: #2e7d32; }
+    .actions { display:flex; gap: 10px; flex-wrap: wrap; }
+    .small { font-size: 12px; }
+    .footer { max-width: 1150px; margin-top: 14px; }
+    .two { display:grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    @media (max-width: 950px){ .two { grid-template-columns: 1fr; } }
+    .right { text-align:right; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .note { background: #fafafa; border: 1px dashed #ddd; padding: 10px; border-radius: 10px; }
+  </style>
+</head>
+<body>
+  <h1>Campervan Electrical Calculator</h1>
+  <div class="muted">MVP calculator for daily energy use, battery sizing, solar sizing, MPPT sizing, DC cable sizing (voltage drop), fuse suggestions, and a simple shopping-list export.</div>
+
+  <div class="grid">
+
+    <div class="card">
+      <div class="row">
+        <div>
+          <label>System voltage</label>
+          <select id="systemVoltage">
+            <option value="12" selected>12V</option>
+            <option value="24">24V</option>
+          </select>
+        </div>
+        <div>
+          <label>Days off-grid (autonomy)</label>
+          <input id="days" type="number" step="0.5" min="0.5" value="2" />
+        </div>
+        <div>
+          <label>Battery chemistry</label>
+          <select id="chem">
+            <option value="lifepo4" selected>LiFePO₄ (Lithium)</option>
+            <option value="lead">Lead-acid (AGM/GEL/Flooded)</option>
+          </select>
+        </div>
+        <div>
+          <label>Usable depth of discharge (DoD)</label>
+          <select id="dod">
+            <option value="0.8" selected>80% (typical lithium)</option>
+            <option value="0.9">90% (aggressive lithium)</option>
+            <option value="0.5">50% (typical lead-acid)</option>
+          </select>
+        </div>
+        <div>
+          <label>Battery reserve (safety margin)</label>
+          <select id="reserve">
+            <option value="1.15" selected>15%</option>
+            <option value="1.10">10%</option>
+            <option value="1.25">25%</option>
+            <option value="1.00">None</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="muted" style="margin-top:10px;">
+        Tip: For lead-acid builds, pick <span class="mono">50%</span> DoD. For lithium, <span class="mono">80%</span> is a good default.
+      </div>
+    </div>
+
+    <div class="two">
+      <div class="card">
+        <div class="row" style="align-items:center;">
+          <div style="flex:1 1 auto; min-width: 240px;">
+            <h3 style="margin:0 0 6px;">Loads</h3>
+            <div class="muted">Add appliances and the calculator totals Wh/day and Ah/day.</div>
+          </div>
+          <div class="actions">
+            <button id="addRow">+ Add load</button>
+            <button id="preset">Add common presets</button>
+            <button id="clear">Clear</button>
+          </div>
+        </div>
+
+        <div style="margin-top: 12px; overflow:auto;">
+          <table id="loadsTable">
+            <thead>
+              <tr>
+                <th>Appliance</th>
+                <th>Watts</th>
+                <th>Hours/day</th>
+                <th>Qty</th>
+                <th class="right">Wh/day</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+            <tfoot>
+              <tr>
+                <td colspan="4" class="right good">Total</td>
+                <td class="right good" id="totalWh">0</td>
+                <td></td>
+              </tr>
+            </tfoot>
+          </table>
+        </div>
+
+        <div class="muted small" style="margin-top:10px;">
+          Notes: For compressor fridges, use an average (e.g. 30–60W) or measure with a plug-in meter.
+        </div>
+      </div>
+
+      <div class="card">
+        <h3 style="margin:0 0 6px;">Solar assumptions</h3>
+        <div class="muted">This uses “effective sun hours” and a system efficiency factor.</div>
+
+        <div class="row" style="margin-top:10px;">
+          <div>
+            <label>Effective sun hours/day</label>
+            <input id="sunHours" type="number" step="0.1" min="0.5" value="3.0" />
+          </div>
+          <div>
+            <label>System efficiency</label>
+            <select id="solarEff">
+              <option value="0.75" selected>75% (realistic)</option>
+              <option value="0.70">70% (conservative)</option>
+              <option value="0.80">80% (optimistic)</option>
+            </select>
+          </div>
+          <div>
+            <label>Winter uplift</label>
+            <select id="winter">
+              <option value="1.0" selected>Off</option>
+              <option value="1.3">On (adds 30% panel)</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="muted small" style="margin-top:10px;">
+          In UK summer, 3–5 hours is common. In UK winter, 0.5–1.5 can be more realistic depending on setup.
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3 style="margin:0 0 8px;">Results</h3>
+      <div id="badges"></div>
+
+      <div class="two" style="margin-top: 10px;">
+        <div>
+          <div class="muted">Daily energy</div>
+          <div class="good" style="font-size: 22px;"><span id="whDay">0</span> Wh/day</div>
+          <div class="muted">≈ <span id="ahDay">0</span> Ah/day @ <span id="vLabel">12</span>V</div>
+        </div>
+        <div>
+          <div class="muted">Battery recommendation</div>
+          <div class="good" style="font-size: 22px;"><span id="batteryAh">0</span> Ah</div>
+          <div class="muted">for <span id="daysLabel">2</span> days, DoD <span id="dodLabel">80</span>%, incl. reserve</div>
+        </div>
+      </div>
+
+      <div class="two" style="margin-top: 10px;">
+        <div>
+          <div class="muted">Solar recommendation</div>
+          <div class="good" style="font-size: 22px;"><span id="solarW">0</span> W</div>
+          <div class="muted">based on sun hours & efficiency</div>
+        </div>
+        <div>
+          <div class="muted">Inverter suggestion (rule of thumb)</div>
+          <div class="good" style="font-size: 22px;"><span id="invW">0</span> W</div>
+          <div class="muted">= peak load × 1.25 (if you use AC loads)</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3 style="margin:0 0 6px;">Solar panel + MPPT sizing (Victron-style)</h3>
+      <div class="muted">Enter panel specs and wiring. The calculator recommends the smallest common MPPT model that meets voltage + current headroom.</div>
+
+      <div class="row" style="margin-top:10px;">
+        <div>
+          <label>Panel watts (W)</label>
+          <input id="panelW" type="number" step="1" min="10" value="200" />
+        </div>
+        <div>
+          <label>Panel Voc (V)</label>
+          <input id="panelVoc" type="number" step="0.1" min="5" value="23.0" />
+        </div>
+        <div>
+          <label>Panel Isc (A)</label>
+          <input id="panelIsc" type="number" step="0.1" min="0.1" value="11.0" />
+        </div>
+        <div>
+          <label>Number of panels</label>
+          <input id="panelCount" type="number" step="1" min="1" value="2" />
+        </div>
+        <div>
+          <label>Panels in series (per string)</label>
+          <input id="seriesCount" type="number" step="1" min="1" value="2" />
+        </div>
+      </div>
+
+      <div class="row" style="margin-top:10px;">
+        <div>
+          <label>Cold factor (Voc uplift)</label>
+          <select id="coldFactor">
+            <option value="1.15">1.15 (mild)</option>
+            <option value="1.20" selected>1.20 (typical safe)</option>
+            <option value="1.25">1.25 (very safe)</option>
+          </select>
+        </div>
+        <div>
+          <label>Charge headroom factor</label>
+          <select id="chargeFactor">
+            <option value="1.10">1.10</option>
+            <option value="1.20" selected>1.20 (typical safe)</option>
+            <option value="1.30">1.30 (very safe)</option>
+          </select>
+        </div>
+        <div>
+          <label>Array summary</label>
+          <input id="arraySummary" readonly />
+        </div>
+        <div>
+          <label>Recommended MPPT</label>
+          <input id="mpptRec" readonly />
+        </div>
+        <div>
+          <label>MPPT checks</label>
+          <input id="mpptChecks" readonly />
+        </div>
+      </div>
+
+      <div class="note muted small" style="margin-top:10px;">
+        MPPT selection logic:
+        <span class="mono">PV max voltage ≥ Voc_string × coldFactor</span> and
+        <span class="mono">MPPT output current ≥ (PV watts ÷ battery volts) × chargeFactor</span>.
+        Always confirm with the panel datasheet and MPPT manual.
+      </div>
+    </div>
+
+    <div class="card">
+      <h3 style="margin:0 0 6px;">DC Cable & Fuse Quick Sizer</h3>
+      <div class="muted">Voltage-drop sizing using copper resistivity. Good for 12V/24V DC circuits (lights, fridge, DC-DC, inverter DC feed, etc.).</div>
+
+      <div class="row" style="margin-top: 10px;">
+        <div>
+          <label>Load current (A)</label>
+          <input id="cableCurrent" type="number" step="0.1" min="0.1" value="20" />
+        </div>
+        <div>
+          <label>One-way cable length (m)</label>
+          <input id="cableLength" type="number" step="0.1" min="0.1" value="3" />
+        </div>
+        <div>
+          <label>Max voltage drop</label>
+          <select id="vdropPct">
+            <option value="0.03" selected>3% (good)</option>
+            <option value="0.05">5% (ok)</option>
+            <option value="0.10">10% (only non-critical)</option>
+          </select>
+        </div>
+        <div>
+          <label>Suggested cable size</label>
+          <input id="cableResult" readonly />
+        </div>
+        <div>
+          <label>Suggested fuse</label>
+          <input id="fuseResult" readonly />
+        </div>
+      </div>
+
+      <div class="muted small" style="margin-top:10px;">
+        Cable sizing formula: A(mm²) = (2 × L × I × 0.0175) / Vdrop(V). This is voltage-drop based, not thermal. Always check the cable's current rating, installation method, and the device manual.
+      </div>
+    </div>
+
+    <div class="card">
+      <h3 style="margin:0 0 6px;">Shopping list output (copy / CSV)</h3>
+      <div class="muted">Enter a couple of key cable lengths and the tool generates a simple parts list you can copy into a quote or spreadsheet.</div>
+
+      <div class="row" style="margin-top:10px;">
+        <div>
+          <label>Include inverter?</label>
+          <select id="incInv">
+            <option value="yes" selected>Yes</option>
+            <option value="no">No</option>
+          </select>
+        </div>
+        <div>
+          <label>Inverter efficiency</label>
+          <select id="invEff">
+            <option value="0.9" selected>90%</option>
+            <option value="0.88">88%</option>
+            <option value="0.92">92%</option>
+          </select>
+        </div>
+        <div>
+          <label>Battery → inverter one-way length (m)</label>
+          <input id="lenInv" type="number" step="0.1" min="0.1" value="1.5" />
+        </div>
+        <div>
+          <label>Include DC-DC charger?</label>
+          <select id="incDcdc">
+            <option value="no" selected>No</option>
+            <option value="yes">Yes</option>
+          </select>
+        </div>
+        <div>
+          <label>DC-DC charge current (A)</label>
+          <input id="dcdcA" type="number" step="1" min="5" value="30" />
+        </div>
+        <div>
+          <label>Starter → DC-DC → leisure run (one-way m)</label>
+          <input id="lenDcdc" type="number" step="0.1" min="0.1" value="4.0" />
+        </div>
+      </div>
+
+      <div class="row" style="margin-top:10px;">
+        <div>
+          <label>MPPT → battery one-way length (m)</label>
+          <input id="lenMppt" type="number" step="0.1" min="0.1" value="1.5" />
+        </div>
+        <div>
+          <label>Use 3% v-drop for “main” runs?</label>
+          <select id="mainDrop">
+            <option value="0.03" selected>Yes (3%)</option>
+            <option value="0.05">No (5%)</option>
+          </select>
+        </div>
+        <div>
+          <label>Main fuse headroom</label>
+          <select id="mainFuseFactor">
+            <option value="1.25" selected>125%</option>
+            <option value="1.10">110%</option>
+            <option value="1.35">135%</option>
+          </select>
+        </div>
+        <div>
+          <label>Generate</label>
+          <button id="genList">Generate list</button>
+        </div>
+        <div>
+          <label>Copy</label>
+          <button id="copyList">Copy to clipboard</button>
+        </div>
+        <div>
+          <label>Download</label>
+          <button id="dlCsv">Download CSV</button>
+        </div>
+      </div>
+
+      <div style="margin-top:10px;">
+        <label>Shopping list (text)</label>
+        <textarea id="listOut" readonly></textarea>
+        <div class="muted small">Tip: paste into Excel or your quoting template. The CSV uses Quantity, Item, Notes.</div>
+      </div>
+    </div>
+
+    <div class="footer muted small">
+      <div><strong>Disclaimer:</strong> This is a planning tool, not a substitute for manufacturer manuals or professional installation. Always fuse close to the battery, use appropriate cable ratings, and follow BS 7671 / ISO 13297 / ISO 10133 (as applicable), plus vehicle manufacturer guidance.</div>
+    </div>
+
+  </div>
+
+<script>
+  // ---------- Helpers ----------
+  const stdSizes = [1,1.5,2.5,4,6,10,16,25,35,50,70,95,120];
+  const stdFuses = [1,2,3,5,7.5,10,15,20,25,30,40,50,60,70,80,100,125,150,175,200,225,250,300,350,400,450,500];
+
+  function roundUpToStandard(value, arr){
+    for (const a of arr){ if (value <= a) return a; }
+    return arr[arr.length-1];
+  }
+  function num(v){ const n = parseFloat(v); return isFinite(n) ? n : 0; }
+  function fmt(n, dp=0){
+    const x = (dp===0) ? Math.round(n) : (Math.round(n*Math.pow(10,dp))/Math.pow(10,dp));
+    return x.toLocaleString(undefined, {minimumFractionDigits: dp, maximumFractionDigits: dp});
+  }
+
+  function cableAreaForVdrop(I, L_oneway, Vsys, vdropPct){
+    const rho = 0.0175; // Ω·mm²/m (copper)
+    const vdropV = Math.max(0.01, Vsys * vdropPct);
+    const area = (2 * L_oneway * I * rho) / vdropV; // mm²
+    const areaStd = roundUpToStandard(area, stdSizes);
+    return {area, areaStd};
+  }
+  function fuseForCurrent(I, factor){
+    return roundUpToStandard(I * factor, stdFuses);
+  }
+
+  // ---------- Loads table ----------
+  const tbody = document.querySelector("#loadsTable tbody");
+
+  function addLoadRow(name="", watts=0, hours=0, qty=1){
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td><input class="name" placeholder="e.g. Fridge" value="${name}"></td>
+      <td><input class="watts" type="number" step="1" min="0" value="${watts}"></td>
+      <td><input class="hours" type="number" step="0.1" min="0" value="${hours}"></td>
+      <td><input class="qty" type="number" step="1" min="1" value="${qty}"></td>
+      <td class="right wh">0</td>
+      <td class="right"><button class="del">Remove</button></td>
+    `;
+    tbody.appendChild(tr);
+
+    tr.querySelectorAll("input").forEach(i => i.addEventListener("input", recalc));
+    tr.querySelector(".del").addEventListener("click", () => { tr.remove(); recalc(); });
+    recalc();
+  }
+
+  function loadPresets(){
+    addLoadRow("Compressor fridge (avg)", 45, 24, 1);
+    addLoadRow("LED lights", 12, 4, 1);
+    addLoadRow("Phone charging", 10, 2, 2);
+    addLoadRow("Laptop", 60, 2, 1);
+    addLoadRow("Water pump", 60, 0.3, 1);
+  }
+
+  // ---------- Core calculations ----------
+  function totalWhPerDay(){
+    let total = 0;
+    [...tbody.querySelectorAll("tr")].forEach(tr => {
+      const w = num(tr.querySelector(".watts").value);
+      const h = num(tr.querySelector(".hours").value);
+      const q = Math.max(1, Math.round(num(tr.querySelector(".qty").value)));
+      const wh = w * h * q;
+      tr.querySelector(".wh").textContent = fmt(wh, 0);
+      total += wh;
+    });
+    return total;
+  }
+
+  function suggestInverterW(){
+    // simple: use highest watts*qty as proxy for peak
+    let peak = 0;
+    [...tbody.querySelectorAll("tr")].forEach(tr => {
+      const w = num(tr.querySelector(".watts").value);
+      const q = Math.max(1, Math.round(num(tr.querySelector(".qty").value)));
+      peak = Math.max(peak, w*q);
+    });
+    return Math.max(0, peak * 1.25);
+  }
+
+  function computeBatteryAh(whDay, V, days, dod, reserve){
+    const whTotal = whDay * days * reserve;
+    const ah = (whTotal / V) / Math.max(0.1, dod);
+    return ah;
+  }
+
+  function computeSolarW(whDay, sunHours, eff, winterFactor){
+    if (sunHours <= 0) return 0;
+    return (whDay / (sunHours * eff)) * winterFactor;
+  }
+
+  function badge(el, text, cls){
+    const s = document.createElement("span");
+    s.className = "pill " + cls;
+    s.textContent = text;
+    el.appendChild(s);
+  }
+
+  // ---------- MPPT sizing ----------
+  const mpptModels = [
+    {name:"75/15",  pvV:75,  outA:15},
+    {name:"75/20",  pvV:75,  outA:20},
+    {name:"100/20", pvV:100, outA:20},
+    {name:"100/30", pvV:100, outA:30},
+    {name:"100/50", pvV:100, outA:50},
+    {name:"150/35", pvV:150, outA:35},
+    {name:"150/45", pvV:150, outA:45},
+    {name:"150/60", pvV:150, outA:60},
+    {name:"150/70", pvV:150, outA:70},
+    {name:"250/60", pvV:250, outA:60},
+    {name:"250/70", pvV:250, outA:70},
+    {name:"250/85", pvV:250, outA:85},
+    {name:"250/100",pvV:250, outA:100},
+  ];
+
+  function mpptRecommend(){
+    const Vsys = num(document.getElementById("systemVoltage").value);
+    const panelW = num(document.getElementById("panelW").value);
+    const panelVoc = num(document.getElementById("panelVoc").value);
+    const panelIsc = num(document.getElementById("panelIsc").value);
+    const panelCount = Math.max(1, Math.round(num(document.getElementById("panelCount").value)));
+    const seriesCount = Math.max(1, Math.round(num(document.getElementById("seriesCount").value)));
+    const coldFactor = num(document.getElementById("coldFactor").value);
+    const chargeFactor = num(document.getElementById("chargeFactor").value);
+
+    const series = Math.min(seriesCount, panelCount);
+    const parallel = Math.ceil(panelCount / series);
+
+    // Array electrical (simple approximations)
+    const arrayW = panelW * panelCount;
+    const vocString = panelVoc * series;
+    const vocCold = vocString * coldFactor;
+    const iscArray = panelIsc * parallel;
+
+    // Required output current (simple)
+    const reqOutA = (arrayW / Math.max(10, Vsys)) * chargeFactor;
+
+    // Find smallest model that meets both
+    let rec = null;
+    for (const m of mpptModels){
+      if (m.pvV >= vocCold && m.outA >= reqOutA){
+        rec = m;
+        break;
+      }
+    }
+
+    document.getElementById("arraySummary").value =
+      `${panelCount} panels: ${series}S${parallel}P, ${fmt(arrayW,0)}W, Voc string ${fmt(vocString,1)}V (cold ${fmt(vocCold,1)}V), Isc ${fmt(iscArray,1)}A`;
+
+    if (!rec){
+      document.getElementById("mpptRec").value = "No match in list (split array / higher MPPT)";
+      document.getElementById("mpptChecks").value = `Need ≥ ${fmt(vocCold,1)}V PV, ≥ ${fmt(reqOutA,1)}A out`;
+      return {arrayW, vocCold, reqOutA, rec:null, series, parallel, iscArray};
+    }
+
+    document.getElementById("mpptRec").value = `Victron SmartSolar ${rec.name} (or equivalent)`;
+    document.getElementById("mpptChecks").value = `PV ok (${rec.pvV}V ≥ ${fmt(vocCold,1)}V), Iout ok (${rec.outA}A ≥ ${fmt(reqOutA,1)}A)`;
+    return {arrayW, vocCold, reqOutA, rec, series, parallel, iscArray};
+  }
+
+  // ---------- Shopping list ----------
+  function shoppingList(){
+    const Vsys = num(document.getElementById("systemVoltage").value);
+    const days = Math.max(0.5, num(document.getElementById("days").value));
+    const dod = num(document.getElementById("dod").value);
+    const reserve = num(document.getElementById("reserve").value);
+
+    const sunHours = Math.max(0.1, num(document.getElementById("sunHours").value));
+    const eff = num(document.getElementById("solarEff").value);
+    const winterFactor = num(document.getElementById("winter").value);
+
+    const whDay = totalWhPerDay();
+    const battAh = computeBatteryAh(whDay, Vsys, days, dod, reserve);
+    const battStd = roundUpToStandard(battAh, [60,80,100,120,150,200,230,280,300,400,460,560,600]);
+
+    const solarW = computeSolarW(whDay, sunHours, eff, winterFactor);
+    const solarStd = roundUpToStandard(solarW, [100,150,200,250,300,350,400,450,500,600,700,800,1000,1200]);
+
+    const invW = suggestInverterW();
+    const invStd = roundUpToStandard(invW, [300,500,800,1000,1200,1600,2000,2400,3000]);
+
+    const mppt = mpptRecommend();
+
+    const incInv = document.getElementById("incInv").value === "yes";
+    const invEff = num(document.getElementById("invEff").value);
+    const lenInv = Math.max(0.1, num(document.getElementById("lenInv").value));
+
+    const incDcdc = document.getElementById("incDcdc").value === "yes";
+    const dcdcA = Math.max(0, num(document.getElementById("dcdcA").value));
+    const lenDcdc = Math.max(0.1, num(document.getElementById("lenDcdc").value));
+
+    const lenMppt = Math.max(0.1, num(document.getElementById("lenMppt").value));
+    const vdropMain = num(document.getElementById("mainDrop").value);
+    const fuseFactor = num(document.getElementById("mainFuseFactor").value);
+
+    const items = [];
+
+    // Battery
+    items.push({qty:1, item:`Leisure battery (recommended size)`, notes:`~${fmt(battStd,0)}Ah @ ${fmt(Vsys,0)}V (DoD ${fmt(dod*100,0)}%, ${fmt(days,1)} days, reserve)`});
+
+    // Solar + MPPT
+    items.push({qty:1, item:`Solar array (target)`, notes:`~${fmt(solarStd,0)}W total (assumes ${fmt(sunHours,1)}h sun, ${fmt(eff*100,0)}% eff, winter x${fmt(winterFactor,2)})`});
+    items.push({qty:1, item:`Solar charge controller (MPPT)`, notes: (mppt.rec ? `Recommend ${mppt.rec.name} class. PV max ≥ ${fmt(mppt.vocCold,1)}V, Iout ≥ ${fmt(mppt.reqOutA,1)}A.` : `Need PV max ≥ ${fmt(mppt.vocCold,1)}V and Iout ≥ ${fmt(mppt.reqOutA,1)}A — consider splitting array or higher MPPT.`) });
+
+    // MPPT cabling and fuse
+    const mpptOutA = mppt.reqOutA || 0;
+    const mpptCable = cableAreaForVdrop(mpptOutA, lenMppt, Vsys, vdropMain);
+    const mpptFuse = fuseForCurrent(mpptOutA, 1.25);
+    items.push({qty:1, item:`Cable (MPPT → battery)`, notes:`${fmt(lenMppt,1)}m one-way, suggest ${mpptCable.areaStd}mm² (calc ${fmt(mpptCable.area,1)}mm²) for ${fmt(vdropMain*100,0)}% drop`});
+    items.push({qty:1, item:`Fuse (MPPT output)`, notes:`~${fmt(mpptFuse,0)}A (rule of thumb 125% of ${fmt(mpptOutA,1)}A)`});
+
+    // Inverter (optional)
+    if (incInv && invStd > 0){
+      const invDC_A = invStd / (Math.max(10, Vsys) * Math.max(0.7, invEff)); // approximate
+      const invCable = cableAreaForVdrop(invDC_A, lenInv, Vsys, vdropMain);
+      const invFuse = fuseForCurrent(invDC_A, fuseFactor);
+      items.push({qty:1, item:`Inverter (suggested size)`, notes:`~${fmt(invStd,0)}W (peak loads ×1.25). DC current est ~${fmt(invDC_A,1)}A @ ${fmt(Vsys,0)}V`});
+      items.push({qty:1, item:`Cable (battery → inverter)`, notes:`${fmt(lenInv,1)}m one-way, suggest ${invCable.areaStd}mm² (calc ${fmt(invCable.area,1)}mm²) for ${fmt(vdropMain*100,0)}% drop`});
+      items.push({qty:1, item:`Fuse (inverter feed)`, notes:`~${fmt(invFuse,0)}A (factor ${fmt(fuseFactor,2)}× on ${fmt(invDC_A,1)}A). Check inverter manual.`});
+      items.push({qty:1, item:`Battery isolator switch (inverter feed)`, notes:`Rated above inverter DC current. Fit accessible.`});
+    }
+
+    // DC-DC (optional)
+    if (incDcdc && dcdcA > 0){
+      const dcdcCable = cableAreaForVdrop(dcdcA, lenDcdc, Vsys, vdropMain);
+      const dcdcFuse = fuseForCurrent(dcdcA, 1.25);
+      items.push({qty:1, item:`DC-DC charger`, notes:`Set to ~${fmt(dcdcA,0)}A charge rate (example). Confirm alternator capacity & manufacturer guidance.`});
+      items.push({qty:2, item:`Fuse / breaker (DC-DC input & output)`, notes:`~${fmt(dcdcFuse,0)}A each side (125% of ${fmt(dcdcA,0)}A)`});
+      items.push({qty:1, item:`Cable (starter ↔ DC-DC ↔ leisure)`, notes:`${fmt(lenDcdc,1)}m one-way (each run), suggest ${dcdcCable.areaStd}mm² (calc ${fmt(dcdcCable.area,1)}mm²) for ${fmt(vdropMain*100,0)}% drop`});
+    }
+
+    // General bits (always useful)
+    items.push({qty:1, item:`Battery monitor / shunt (optional)`, notes:`500A shunt typical for van systems.`});
+    items.push({qty:1, item:`Busbars + main fusing (recommended)`, notes:`Positive & negative busbars, fuse close to battery for each major circuit.`});
+    items.push({qty:1, item:`Crimps + heatshrink`, notes:`Match cable sizes and stud sizes (M6/M8/M10). Adhesive-lined heatshrink recommended.`});
+
+    return items;
+  }
+
+  function listToText(items){
+    let out = "";
+    out += "Qty\tItem\tNotes\n";
+    items.forEach(it => {
+      out += `${it.qty}\t${it.item}\t${it.notes}\n`;
+    });
+    return out;
+  }
+  function listToCsv(items){
+    const esc = (s) => `"${String(s).replaceAll('"','""')}"`;
+    let out = "Quantity,Item,Notes\n";
+    items.forEach(it => out += `${it.qty},${esc(it.item)},${esc(it.notes)}\n`);
+    return out;
+  }
+
+  // ---------- UI recalc ----------
+  function recalc(){
+    const V = num(document.getElementById("systemVoltage").value);
+    const days = Math.max(0.5, num(document.getElementById("days").value));
+    const dod = num(document.getElementById("dod").value);
+    const reserve = num(document.getElementById("reserve").value);
+
+    const sunHours = Math.max(0.1, num(document.getElementById("sunHours").value));
+    const eff = num(document.getElementById("solarEff").value);
+    const winterFactor = num(document.getElementById("winter").value);
+
+    const whDay = totalWhPerDay();
+    document.getElementById("totalWh").textContent = fmt(whDay, 0);
+    document.getElementById("whDay").textContent = fmt(whDay, 0);
+    document.getElementById("vLabel").textContent = fmt(V,0);
+    document.getElementById("daysLabel").textContent = fmt(days,1);
+    document.getElementById("dodLabel").textContent = fmt(dod*100,0);
+
+    const ahDay = (V>0) ? (whDay / V) : 0;
+    document.getElementById("ahDay").textContent = fmt(ahDay, 1);
+
+    const battAh = computeBatteryAh(whDay, V, days, dod, reserve);
+    const battStd = roundUpToStandard(battAh, [60,80,100,120,150,200,230,280,300,400,460,560,600]);
+    document.getElementById("batteryAh").textContent = fmt(battStd, 0);
+
+    const solarW = computeSolarW(whDay, sunHours, eff, winterFactor);
+    const solarStd = roundUpToStandard(solarW, [100,150,200,250,300,350,400,450,500,600,700,800,1000,1200]);
+    document.getElementById("solarW").textContent = fmt(solarStd, 0);
+
+    const invW = suggestInverterW();
+    const invStd = roundUpToStandard(invW, [300,500,800,1000,1200,1600,2000,2400,3000]);
+    document.getElementById("invW").textContent = fmt(invStd, 0);
+
+    // Badges
+    const badges = document.getElementById("badges");
+    badges.innerHTML = "";
+    if (whDay === 0){
+      badge(badges, "Add loads to calculate", "warn");
+    } else {
+      const chem = document.getElementById("chem").value;
+      badge(badges, chem === "lifepo4" ? "Lithium mode" : "Lead-acid mode", "ok");
+      if (V === 12 && solarStd >= 600) badge(badges, "High solar for 12V (consider 24V or split MPPTs)", "warn");
+      if (days >= 3) badge(badges, "3+ days autonomy (battery gets big quickly)", "warn");
+    }
+
+    // Cable & fuse quick sizer
+    const I = Math.max(0.1, num(document.getElementById("cableCurrent").value));
+    const L = Math.max(0.1, num(document.getElementById("cableLength").value));
+    const vdropPct = num(document.getElementById("vdropPct").value);
+
+    const ca = cableAreaForVdrop(I, L, V, vdropPct);
+    const fuseA = fuseForCurrent(I, 1.25);
+
+    document.getElementById("cableResult").value = `${ca.areaStd} mm² (calc ${fmt(ca.area,1)} mm²)`;
+    document.getElementById("fuseResult").value = `${fmt(fuseA,0)} A`;
+
+    // MPPT update
+    mpptRecommend();
+  }
+
+  // ---------- Events ----------
+  document.getElementById("addRow").addEventListener("click", () => addLoadRow());
+  document.getElementById("preset").addEventListener("click", loadPresets);
+  document.getElementById("clear").addEventListener("click", () => { tbody.innerHTML=""; recalc(); });
+
+  ["systemVoltage","days","chem","dod","reserve","sunHours","solarEff","winter",
+   "cableCurrent","cableLength","vdropPct",
+   "panelW","panelVoc","panelIsc","panelCount","seriesCount","coldFactor","chargeFactor",
+   "incInv","invEff","lenInv","incDcdc","dcdcA","lenDcdc","lenMppt","mainDrop","mainFuseFactor"
+  ].forEach(id => document.getElementById(id).addEventListener("input", recalc));
+
+  document.getElementById("genList").addEventListener("click", () => {
+    const items = shoppingList();
+    document.getElementById("listOut").value = listToText(items);
+  });
+
+  document.getElementById("copyList").addEventListener("click", async () => {
+    const txt = document.getElementById("listOut").value || "";
+    try{
+      await navigator.clipboard.writeText(txt);
+      alert("Copied!");
+    }catch(e){
+      alert("Couldn’t copy automatically. Select all and copy manually.");
+    }
+  });
+
+  document.getElementById("dlCsv").addEventListener("click", () => {
+    const items = shoppingList();
+    const csv = listToCsv(items);
+    const blob = new Blob([csv], {type:"text/csv;charset=utf-8"});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "campervan-shopping-list.csv";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  });
+
+  // Start with sensible defaults
+  addLoadRow("Fridge (avg)", 45, 24, 1);
+  addLoadRow("Lights", 12, 4, 1);
+  recalc();
+</script>
+
+</body>
+</html>
